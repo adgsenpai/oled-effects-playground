@@ -1,19 +1,8 @@
-# OLED Effects Playground
+# Spinning Donut OLED
 
-Eight animated effects for the monochrome 128x64 SSD1306 OLED built into the ESP8266 HW-364 / D-duino-style board. A new effect starts every five seconds.
+A continuously spinning, shaded 3D torus animation for the monochrome 128x64 SSD1306 OLED built into an ESP8266 HW-364 / D-duino-style board.
 
-The display is monochrome, so it cannot produce RGB colors. This project explores the available visual range with dithering, black-and-white patterns, geometric animation, and motion.
-
-## Effects
-
-1. Dither spectrum
-2. Starfield
-3. Radar sweep
-4. Wave interference
-5. Kaleidoscope
-6. Digital rain
-7. Particle burst
-8. Living checkerboard
+The display cannot produce RGB colors. This sketch uses an ordered-dither pattern to create several apparent brightness levels from its black-and-white pixels.
 
 ## Board and libraries
 
