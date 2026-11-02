@@ -1,8 +1,8 @@
-# Spinning Donut OLED
+# Goldfish Tank OLED Simulator
 
-A continuously spinning, shaded 3D torus animation for the monochrome 128x64 SSD1306 OLED built into an ESP8266 HW-364 / D-duino-style board.
+A little animated aquarium for the monochrome 128x64 SSD1306 OLED built into an ESP8266 HW-364 / D-duino-style board. Two goldfish swim past rising bubbles, waving plants, gravel, and a rippling surface.
 
-The display cannot produce RGB colors. This sketch uses an ordered-dither pattern to create several apparent brightness levels from its black-and-white pixels.
+The display cannot produce RGB colors; the fish use cutout scale details to suggest bright gold markings on its black-and-white pixels.
 
 ## Board and libraries
 

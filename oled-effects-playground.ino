@@ -1,132 +1,134 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <math.h>
-#include <string.h>
 
 // Known-working HW-364 setup: software-I2C clock GPIO14, data GPIO12.
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(
     U8G2_R0, /* clock=*/14, /* data=*/12, U8X8_PIN_NONE);
 
-constexpr uint8_t WIDTH = 128;
-constexpr uint8_t HEIGHT = 64;
-constexpr uint8_t TUBE_STEPS = 28;
-constexpr uint8_t RING_STEPS = 64;
-constexpr float PI_F = 3.14159265f;
+constexpr uint8_t SCREEN_WIDTH = 128;
+constexpr uint8_t SCREEN_HEIGHT = 64;
 
-uint16_t depthBuffer[WIDTH * HEIGHT];
-uint8_t shadeBuffer[WIDTH * HEIGHT];
-float tubeCos[TUBE_STEPS];
-float tubeSin[TUBE_STEPS];
-float ringCos[RING_STEPS];
-float ringSin[RING_STEPS];
 uint32_t lastFrameAt = 0;
 uint16_t frameNumber = 0;
 
-void prepareTables() {
-  for (uint8_t i = 0; i < TUBE_STEPS; i++) {
-    const float angle = 2.0f * PI_F * i / TUBE_STEPS;
-    tubeCos[i] = cosf(angle);
-    tubeSin[i] = sinf(angle);
+int16_t wrapX(int16_t x) {
+  if (x < -24) return SCREEN_WIDTH + 24;
+  if (x > SCREEN_WIDTH + 24) return -24;
+  return x;
+}
+
+void drawSurface(uint8_t phase) {
+  u8g2.setDrawColor(1);
+  for (int16_t x = 0; x < SCREEN_WIDTH; x += 2) {
+    const int16_t y = 15 + sinf((x + phase * 2) * 0.11f) * 1.5f;
+    u8g2.drawPixel(x, y);
+    if ((x + phase) % 12 < 2) {
+      u8g2.drawPixel(x, y + 1);
+    }
   }
-  for (uint8_t i = 0; i < RING_STEPS; i++) {
-    const float angle = 2.0f * PI_F * i / RING_STEPS;
-    ringCos[i] = cosf(angle);
-    ringSin[i] = sinf(angle);
+  u8g2.drawHLine(0, 18, SCREEN_WIDTH);
+}
+
+void drawPlant(int16_t x, uint8_t height, uint8_t sway) {
+  const int16_t baseY = 62;
+  const int16_t topY = baseY - height;
+  const int16_t bend = sinf(sway * 0.09f + x) * 4;
+  u8g2.drawLine(x, baseY, x + bend, topY);
+  for (uint8_t leaf = 0; leaf < 4; leaf++) {
+    const int16_t y = baseY - 5 - leaf * (height / 5);
+    const int16_t stemX = x + bend * (baseY - y) / height;
+    const int8_t direction = (leaf & 1) ? 1 : -1;
+    u8g2.drawLine(stemX, y, stemX + direction * 7, y - 4);
+    u8g2.drawLine(stemX + direction * 7, y - 4, stemX + direction * 4, y + 1);
+    u8g2.drawLine(stemX + direction * 4, y + 1, stemX, y);
   }
 }
 
-void renderDonut(float angleA, float angleB) {
-  memset(depthBuffer, 0, sizeof(depthBuffer));
-  memset(shadeBuffer, 0, sizeof(shadeBuffer));
-
-  const float sinA = sinf(angleA);
-  const float cosA = cosf(angleA);
-  const float sinB = sinf(angleB);
-  const float cosB = cosf(angleB);
-
-  // Rotate a sampled torus, project it, then keep the nearest surface per pixel.
-  for (uint8_t ti = 0; ti < TUBE_STEPS; ti++) {
-    const float tubeC = tubeCos[ti];
-    const float tubeS = tubeSin[ti];
-    const float radial = 1.15f + 0.62f * tubeC;
-
-    for (uint8_t ri = 0; ri < RING_STEPS; ri++) {
-      const float ringC = ringCos[ri];
-      const float ringS = ringSin[ri];
-      const float x = radial * ringC;
-      const float y = radial * ringS;
-      const float z = 0.62f * tubeS;
-
-      const float rotatedX = x * cosB - y * sinB;
-      const float rotatedY = (x * sinB + y * cosB) * cosA - z * sinA;
-      const float rotatedZ = (x * sinB + y * cosB) * sinA + z * cosA;
-      const float distance = 4.2f - rotatedZ;
-      if (distance <= 0.1f) {
-        continue;
-      }
-
-      const int16_t px = 64 + (int16_t)(100.0f * rotatedX / distance);
-      const int16_t py = 36 - (int16_t)(52.0f * rotatedY / distance);
-      if (px < 1 || px >= WIDTH - 1 || py < 15 || py >= HEIGHT - 1) {
-        continue;
-      }
-
-      const uint16_t depth = 6000 - (uint16_t)(distance * 1000.0f);
-      const uint16_t index = py * WIDTH + px;
-      if (depth <= depthBuffer[index]) {
-        continue;
-      }
-      depthBuffer[index] = depth;
-
-      // Rotate the torus normal and quantize its light level for monochrome dithering.
-      const float nx = tubeC * ringC;
-      const float ny = tubeC * ringS;
-      const float nz = tubeS;
-      const float normalX = nx * cosB - ny * sinB;
-      const float normalY = (nx * sinB + ny * cosB) * cosA - nz * sinA;
-      const float normalZ = (nx * sinB + ny * cosB) * sinA + nz * cosA;
-      float light = normalX * -0.35f + normalY * -0.45f + normalZ * 0.82f;
-      if (light < 0.0f) {
-        light = 0.0f;
-      }
-      if (light > 1.0f) {
-        light = 1.0f;
-      }
-      shadeBuffer[index] = 1 + (uint8_t)(light * 3.0f);
+void drawBubble(int16_t x, uint8_t phase, uint8_t speed, uint8_t size) {
+  const uint8_t travel = (phase * speed + x * 3) % 48;
+  const int16_t y = 60 - travel;
+  const int16_t drift = sinf((phase + x) * 0.13f) * 2;
+  const int16_t bubbleX = x + drift;
+  if (y > 19) {
+    u8g2.drawCircle(bubbleX, y, size);
+    if (size > 2) {
+      u8g2.drawPixel(bubbleX - 1, y - 1);
     }
   }
+}
 
+void drawGoldfish(int16_t x, int16_t y, bool faceRight, uint8_t size, uint8_t tailPhase) {
+  const int8_t direction = faceRight ? 1 : -1;
+  const int16_t bodyLength = size * 2;
+  const int16_t bodyHeight = size;
+  const int16_t tailX = x - direction * bodyLength;
+  const int16_t tailWag = (tailPhase & 1) ? 2 : -2;
+
+  u8g2.setDrawColor(1);
+  u8g2.drawTriangle(tailX, y,
+                    tailX - direction * (size + 5), y - size + tailWag,
+                    tailX - direction * (size + 5), y + size + tailWag);
+  u8g2.drawFilledEllipse(x, y, bodyLength, bodyHeight);
+
+  // Cut a few scales from the silhouette to suggest bright gold markings.
+  u8g2.setDrawColor(0);
+  u8g2.drawDisc(x - direction * 3, y - 1, 1);
+  u8g2.drawDisc(x + direction * 2, y + 1, 1);
+  u8g2.drawDisc(x + direction * 7, y - 1, 1);
+  u8g2.setDrawColor(1);
+
+  const int16_t eyeX = x + direction * (bodyLength - 3);
+  u8g2.drawDisc(eyeX, y - 2, 1);
+  u8g2.drawLine(x - direction * 1, y + bodyHeight - 1,
+                x + direction * 5, y + bodyHeight + 2);
+}
+
+void drawTank(uint8_t phase) {
   u8g2.clearBuffer();
   u8g2.setDrawColor(1);
   u8g2.setFont(u8g2_font_5x8_tf);
-  u8g2.drawStr(4, 9, "ESP8266 / SPINNING DONUT");
-  u8g2.drawHLine(3, 12, 122);
+  u8g2.drawStr(4, 9, "GOLDFISH TANK");
+  u8g2.drawStr(101, 9, "<><");
+  drawSurface(phase);
 
-  static const uint8_t dither[2][2] = {{0, 2}, {3, 1}};
-  for (uint8_t y = 15; y < HEIGHT - 1; y++) {
-    for (uint8_t x = 1; x < WIDTH - 1; x++) {
-      const uint16_t index = y * WIDTH + x;
-      if (shadeBuffer[index] > dither[y & 1][x & 1]) {
-        u8g2.drawPixel(x, y);
-      }
-    }
+  drawBubble(18, phase, 2, 1);
+  drawBubble(43, phase + 13, 1, 2);
+  drawBubble(88, phase + 25, 2, 1);
+  drawBubble(111, phase + 7, 1, 2);
+
+  const int16_t fishX1 = wrapX(20 + (phase * 2) % 150);
+  const int16_t fishY1 = 34 + sinf(phase * 0.10f) * 4;
+  drawGoldfish(fishX1, fishY1, true, 5, phase / 2);
+
+  const int16_t fishX2 = wrapX(104 - (phase * 1) % 152);
+  const int16_t fishY2 = 47 + sinf(phase * 0.13f + 2) * 3;
+  drawGoldfish(fishX2, fishY2, false, 3, phase / 3);
+
+  drawPlant(13, 21, phase);
+  drawPlant(29, 15, phase + 12);
+  drawPlant(101, 17, phase + 28);
+  drawPlant(118, 24, phase + 7);
+
+  for (uint8_t pebble = 0; pebble < 18; pebble++) {
+    const int16_t x = 3 + pebble * 7;
+    const uint8_t radius = 1 + (pebble % 3 == 0);
+    u8g2.drawDisc(x, 62 - radius, radius);
   }
+  u8g2.drawHLine(0, 63, SCREEN_WIDTH);
   u8g2.sendBuffer();
 }
 
 void setup() {
   Serial.begin(115200);
   u8g2.begin();
-  prepareTables();
-  Serial.println(F("Spinning monochrome 3D donut"));
+  Serial.println(F("Goldfish tank simulator ready"));
 }
 
 void loop() {
   const uint32_t now = millis();
-  if (now - lastFrameAt >= 45) {
+  if (now - lastFrameAt >= 70) {
     lastFrameAt = now;
-    const float phase = frameNumber * 0.055f;
-    renderDonut(phase * 0.73f, phase);
-    frameNumber++;
+    drawTank(frameNumber++);
   }
 }
